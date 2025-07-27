@@ -361,6 +361,9 @@
         gap: 8px;
         justify-content: center;
         margin: 20px 0;
+        gap: 8px;
+        justify-content: center;
+        margin: 20px 0;
       }
       
       .mode-btn {
@@ -1842,13 +1845,13 @@
 
       let duration = 1500;
       let timeLeft = duration;
-      let timerInterval;
+      let timerInterval = null;
       let activeTaskIndex = null;
       let isPlaying = false;
-      let currentVolume = localStorage.getItem('musicVolume') || 50;
-      let currentGenre = 'lofi';
+      let currentVolume = parseInt(localStorage.getItem('musicVolume')) || 50;
+      let currentGenre = localStorage.getItem('musicGenre') || 'lofi';
       let currentTrackIndex = 0;
-      let isCollapsed = true;
+      let isCollapsed = localStorage.getItem('musicCollapsed') !== 'false';
       function detectBrowserLanguage() {
         const browserLang = navigator.language || navigator.userLanguage;
         if (browserLang.startsWith('en')) return 'en';
@@ -2195,18 +2198,23 @@
         const minutes = String(Math.floor(timeLeft / 60)).padStart(2, "0");
         const seconds = String(timeLeft % 60).padStart(2, "0");
         const timeText = `${minutes}:${seconds}`;
-        document.getElementById('timeDisplay').textContent = timeText;
         
-        // Atualizar título da página
-        document.title = timerInterval ? `${timeText} - Pomodoro` : 'Pomodoro Dinâmico';
+        const timeDisplay = document.getElementById('timeDisplay');
+        if (timeDisplay) {
+          timeDisplay.textContent = timeText;
+          timeDisplay.setAttribute('aria-label', `Tempo restante: ${minutes} minutos e ${seconds} segundos`);
+        }
+        
+        // Atualizar título da página com informação do modo
+        const modeText = currentMode === 'work' ? 'Trabalho' : 
+                        currentMode === 'shortBreak' ? 'Descanso' : 'Descanso Longo';
+        document.title = timerInterval ? `${timeText} - ${modeText}` : 'Pomodoro Dinâmico';
         
         // Atualizar barra de progresso
         const progressFill = document.getElementById('progressFill');
-        if (duration > 0) {
+        if (progressFill && duration > 0) {
           const progress = ((duration - timeLeft) / duration) * 100;
           progressFill.style.width = `${Math.max(0, Math.min(100, progress))}%`;
-        } else {
-          progressFill.style.width = '0%';
         }
         
         // Atualizar ícone do timer baseado no progresso
@@ -2218,7 +2226,7 @@
           if (progress < 0.25) {
             timerIcon.className = 'fas fa-clock timer-icon';
           } else if (progress < 0.5) {
-            timerIcon.className = 'fas fa-clock-o timer-icon';
+            timerIcon.className = 'fas fa-clock timer-icon';
           } else if (progress < 0.75) {
             timerIcon.className = 'fas fa-hourglass-half timer-icon';
           } else {
@@ -2230,6 +2238,21 @@
             timerIcon.classList.add('active');
           } else {
             timerIcon.classList.remove('active');
+          }
+        }
+        
+        // Alerta visual quando restam poucos segundos
+        if (timeLeft <= 10 && timeLeft > 0 && timerInterval) {
+          const timer = document.getElementById('timer');
+          if (timer) {
+            timer.style.color = '#ff6b6b';
+            timer.style.animation = 'pulse 1s infinite';
+          }
+        } else {
+          const timer = document.getElementById('timer');
+          if (timer) {
+            timer.style.color = '';
+            timer.style.animation = '';
           }
         }
       }
@@ -2409,12 +2432,7 @@
         }
       };
       
-      // Event listeners para modos
-      document.getElementById('workMode').onclick = () => switchMode('work');
-      document.getElementById('shortBreakMode').onclick = () => switchMode('shortBreak');
-      document.getElementById('longBreakMode').onclick = () => switchMode('longBreak');
-      pauseBtn.onclick = pauseTimer;
-      resetBtn.onclick = resetTimer;
+      // Event listeners para modos (removido - será adicionado em initializeEventListeners)
 
       const taskInput = document.getElementById("taskInput");
       const taskList = document.getElementById("taskList");
@@ -2520,7 +2538,9 @@
         const selectBtn = document.createElement("button");
         selectBtn.className = `select-btn ${activeTaskIndex === originalIndex ? 'active' : ''}`;
         selectBtn.textContent = activeTaskIndex === originalIndex ? "● Em Foco" : "Focar";
-        selectBtn.onclick = () => {
+        selectBtn.setAttribute('aria-label', `Focar na tarefa: ${task.title}`);
+        selectBtn.onclick = (e) => {
+          e.preventDefault();
           if (timerInterval) {
             alert("Pause o timer antes de trocar de tarefa.");
             return;
@@ -2530,22 +2550,26 @@
           timeLeft = duration;
           updateTimerDisplay();
           debouncedLoadTasks();
+          playButtonSound();
         };
         
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "delete-btn";
         deleteBtn.textContent = "×";
-        deleteBtn.onclick = () => {
+        deleteBtn.setAttribute('aria-label', `Deletar tarefa: ${task.title}`);
+        deleteBtn.onclick = (e) => {
+          e.preventDefault();
           if (confirm(`Deletar "${task.title}"?`)) {
             if (activeTaskIndex === originalIndex) {
               activeTaskIndex = null;
               resetTimer();
-            } else if (activeTaskIndex > originalIndex) {
+            } else if (activeTaskIndex !== null && activeTaskIndex > originalIndex) {
               activeTaskIndex--;
             }
             allTasks.splice(originalIndex, 1);
             saveTasks(allTasks);
             debouncedLoadTasks();
+            playButtonSound();
           }
         };
         
@@ -2557,33 +2581,37 @@
 
       function saveTasks(tasks) {
         try {
-          sessionStorage.setItem("tasks", JSON.stringify(tasks));
+          const validTasks = tasks.filter(task => 
+            task && 
+            typeof task.title === 'string' && 
+            task.title.trim().length > 0 &&
+            typeof task.time === 'number' && 
+            task.time > 0
+          );
+          localStorage.setItem("tasks", JSON.stringify(validTasks));
         } catch (e) {
-          localStorage.setItem("tasks", JSON.stringify(tasks));
+          console.error('Erro ao salvar tarefas:', e);
         }
       }
 
       function getTasks() {
         try {
-          const data = sessionStorage.getItem("tasks");
+          const data = localStorage.getItem("tasks") || sessionStorage.getItem("tasks");
           if (!data) return [];
           const tasks = JSON.parse(data);
-          // Validar estrutura dos dados
+          
+          // Validação mais robusta
           return Array.isArray(tasks) ? tasks.filter(task => 
-            task && typeof task.title === 'string' && typeof task.time === 'number'
+            task && 
+            typeof task.title === 'string' && 
+            task.title.trim().length > 0 &&
+            typeof task.time === 'number' && 
+            task.time > 0 &&
+            typeof task.done === 'boolean'
           ) : [];
         } catch (e) {
-          try {
-            const data = localStorage.getItem("tasks");
-            if (!data) return [];
-            const tasks = JSON.parse(data);
-            return Array.isArray(tasks) ? tasks.filter(task => 
-              task && typeof task.title === 'string' && typeof task.time === 'number'
-            ) : [];
-          } catch (e2) {
-            console.warn('Erro ao carregar tarefas:', e2);
-            return [];
-          }
+          console.warn('Erro ao carregar tarefas:', e);
+          return [];
         }
       }
 
@@ -2605,28 +2633,55 @@
         const time = validateNumber(taskTime.value, 60, 7200) || 1500;
         
         const tasks = getTasks();
-        tasks.push({
+        const newTask = {
+          id: Date.now() + Math.random(), // ID único
           title: sanitizeHTML(title),
           time: time,
           cycles: cycles,
           currentCycle: 0,
           done: false,
           createdAt: new Date().toISOString()
-        });
+        };
         
+        tasks.push(newTask);
         saveTasks(tasks);
+        
+        // Limpar inputs
         taskInput.value = "";
         if (cyclesInput) cyclesInput.value = "1";
+        taskTime.selectedIndex = 0; // Reset para 25min
+        
         updateAddButton();
         taskInput.focus();
         debouncedLoadTasks();
+        
+        // Feedback visual
+        const addBtn = document.getElementById('addTask');
+        if (addBtn) {
+          addBtn.style.background = '#4CAF50';
+          addBtn.style.color = 'white';
+          setTimeout(() => {
+            addBtn.style.background = '';
+            addBtn.style.color = '';
+          }, 500);
+        }
       }
 
-      document.getElementById('addTask').onclick = addTask;
-      taskInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') addTask();
-      });
-      taskInput.addEventListener('input', updateAddButton);
+      // Event listeners para tarefas (serão adicionados em initializeEventListeners)
+      function setupTaskInputListeners() {
+        const addTaskBtn = document.getElementById('addTask');
+        if (addTaskBtn) addTaskBtn.onclick = addTask;
+        
+        if (taskInput) {
+          taskInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              addTask();
+            }
+          });
+          taskInput.addEventListener('input', updateAddButton);
+        }
+      }
 
       function loadHistory() {
         const tasks = getTasks();
@@ -2814,12 +2869,16 @@
         const content = document.getElementById('musicContent');
         const toggle = document.getElementById('musicToggle');
         
+        localStorage.setItem('musicCollapsed', isCollapsed);
+        
         if (isCollapsed) {
           content.classList.add('collapsed');
           toggle.textContent = '+';
+          toggle.setAttribute('aria-expanded', 'false');
         } else {
           content.classList.remove('collapsed');
           toggle.textContent = '−';
+          toggle.setAttribute('aria-expanded', 'true');
         }
       }
       
@@ -2827,12 +2886,14 @@
         const playlist = musicGenres[currentGenre];
         if (!playlist || playlist.length === 0) {
           console.warn('Playlist vazia para gênero:', currentGenre);
+          updateMusicUI('Playlist vazia', false);
           return;
         }
         
         const track = playlist[currentTrackIndex];
         if (!track || !track.url) {
           console.warn('Track inválida:', track);
+          updateMusicUI('Track inválida', false);
           return;
         }
         
@@ -2843,28 +2904,48 @@
             audioElement.currentTime = 0;
             audioElement.removeEventListener('error', handleAudioError);
             audioElement.removeEventListener('ended', handleAudioEnded);
+            audioElement.removeEventListener('loadstart', handleAudioLoadStart);
+            audioElement.removeEventListener('canplay', handleAudioCanPlay);
           }
+          
+          // Mostrar loading
+          updateMusicUI('Carregando...', false);
           
           audioElement = new Audio(track.url);
           audioElement.volume = Math.max(0, Math.min(1, currentVolume / 100));
           audioElement.loop = true;
+          audioElement.preload = 'metadata';
           
           // Event listeners para áudio
           audioElement.addEventListener('error', handleAudioError);
           audioElement.addEventListener('ended', handleAudioEnded);
+          audioElement.addEventListener('loadstart', handleAudioLoadStart);
+          audioElement.addEventListener('canplay', handleAudioCanPlay);
           
           audioElement.play().then(() => {
             startMusicBars();
             updateMusicUI(track.name, true);
+            isPlaying = true;
           }).catch(e => {
-            console.warn('Autoplay bloqueado:', e);
+            console.warn('Autoplay bloqueado ou erro de reprodução:', e);
             handleAudioError();
           });
           
-          isPlaying = true;
         } catch (e) {
           console.error('Erro ao iniciar áudio:', e);
           handleAudioError();
+        }
+      }
+      
+      function handleAudioLoadStart() {
+        updateMusicUI('Conectando...', false);
+      }
+      
+      function handleAudioCanPlay() {
+        const playlist = musicGenres[currentGenre];
+        const track = playlist[currentTrackIndex];
+        if (track) {
+          updateMusicUI(track.name, isPlaying);
         }
       }
       
@@ -2964,6 +3045,7 @@
         
         currentGenre = genre;
         currentTrackIndex = 0;
+        localStorage.setItem('musicGenre', genre);
         
         document.querySelectorAll('.genre-btn').forEach(btn => {
           btn.classList.remove('active');
@@ -2978,31 +3060,60 @@
       // Função de limpeza
       function clearAll() {
         if (confirm(translations[currentLanguage].confirmClear)) {
-          if (timerInterval) {
-            clearInterval(timerInterval);
-            timerInterval = null;
+          try {
+            // Parar timer e música
+            if (timerInterval) {
+              clearInterval(timerInterval);
+              timerInterval = null;
+            }
+            if (isPlaying) {
+              stopMusic();
+            }
+            
+            // Reset variáveis
+            activeTaskIndex = null;
+            duration = 1500;
+            timeLeft = duration;
+            workSessions = 0;
+            shortBreakSessions = 0;
+            longBreakSessions = 0;
+            pomodoroCount = 0;
+            
+            // Limpar storage
+            const keysToRemove = [
+              'tasks', 'workSessions', 'shortBreakSessions', 'longBreakSessions'
+            ];
+            
+            keysToRemove.forEach(key => {
+              localStorage.removeItem(key);
+              sessionStorage.removeItem(key);
+            });
+            
+            // Atualizar UI
+            switchMode('work');
+            updateTimerDisplay();
+            updateSessionCounters();
+            loadTasks();
+            loadHistory();
+            
+            const startBtn = document.getElementById('start');
+            if (startBtn) startBtn.textContent = translations[currentLanguage].start;
+            
+            document.title = 'Pomodoro Dinâmico';
+            
+            // Feedback visual
+            const clearBtn = document.getElementById('clearAllBtn');
+            if (clearBtn) {
+              clearBtn.textContent = '✓ Dados Limpos';
+              setTimeout(() => {
+                clearBtn.innerHTML = '<i class="fas fa-trash"></i> Limpar Todos os Dados';
+              }, 2000);
+            }
+            
+          } catch (error) {
+            console.error('Erro ao limpar dados:', error);
+            alert('Erro ao limpar dados. Tente novamente.');
           }
-          if (isPlaying) {
-            stopMusic();
-          }
-          activeTaskIndex = null;
-          duration = 1500;
-          timeLeft = duration;
-          workSessions = 0;
-          shortBreakSessions = 0;
-          longBreakSessions = 0;
-          pomodoroCount = 0;
-          sessionStorage.removeItem('tasks');
-          localStorage.removeItem('tasks');
-          localStorage.removeItem('workSessions');
-          localStorage.removeItem('shortBreakSessions');
-          localStorage.removeItem('longBreakSessions');
-          updateTimerDisplay();
-          updateSessionCounters();
-          loadTasks();
-          loadHistory();
-          document.getElementById('start').textContent = translations[currentLanguage].start;
-          document.title = 'Pomodoro Dinâmico';
         }
       }
       
@@ -3155,6 +3266,7 @@
       
       // Event listeners com verificação de elementos
       function initializeEventListeners() {
+        // Remover listeners existentes para evitar duplicação
         const elements = {
           musicToggle: () => { playButtonSound(); toggleMusicPlayer(); },
           playBtn: () => { playButtonSound(); togglePlayPause(); },
@@ -3171,7 +3283,12 @@
           closeSettings: hideSettings,
           darkThemeBtn: () => { playButtonSound(); setTheme('dark'); },
           lightThemeBtn: () => { playButtonSound(); setTheme('light'); },
-          clearAllBtn: () => { playButtonSound(); clearAll(); }
+          clearAllBtn: () => { playButtonSound(); clearAll(); },
+          workMode: () => { playButtonSound(); switchMode('work'); },
+          shortBreakMode: () => { playButtonSound(); switchMode('shortBreak'); },
+          longBreakMode: () => { playButtonSound(); switchMode('longBreak'); },
+          pause: () => { playButtonSound(); pauseTimer(); },
+          reset: () => { playButtonSound(); resetTimer(); }
         };
         
         Object.entries(elements).forEach(([id, handler]) => {
@@ -3223,26 +3340,7 @@
           };
         }
         
-        // Timer controls
-        const startBtn = document.getElementById('start');
-        if (startBtn) {
-          startBtn.onclick = () => {
-            playButtonSound();
-            if (timerInterval) {
-              if (confirm(translations[currentLanguage].confirmComplete)) {
-                completePomodoro();
-              }
-            } else {
-              startTimer();
-            }
-          };
-        }
-        
-        const pauseBtn = document.getElementById('pause');
-        if (pauseBtn) pauseBtn.onclick = () => { playButtonSound(); pauseTimer(); };
-        
-        const resetBtn = document.getElementById('reset');
-        if (resetBtn) resetBtn.onclick = () => { playButtonSound(); resetTimer(); };
+        // Timer controls já incluídos no objeto elements acima
         
         // Background options
         document.querySelectorAll('.bg-option').forEach(option => {
@@ -3268,9 +3366,34 @@
       
       // Cleanup ao fechar página
       window.addEventListener('beforeunload', () => {
-        if (timerInterval) clearInterval(timerInterval);
-        if (audioElement) audioElement.pause();
-        audioContexts.forEach(ctx => ctx.close());
+        try {
+          if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+          }
+          if (audioElement) {
+            audioElement.pause();
+            audioElement.src = '';
+            audioElement = null;
+          }
+          audioContexts.forEach(ctx => {
+            if (ctx.state !== 'closed') {
+              ctx.close();
+            }
+          });
+          audioContexts = [];
+        } catch (e) {
+          console.warn('Erro durante cleanup:', e);
+        }
+      });
+      
+      // Pausar música quando a aba perde o foco
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && isPlaying && audioElement) {
+          audioElement.pause();
+        } else if (!document.hidden && isPlaying && audioElement) {
+          audioElement.play().catch(e => console.warn('Erro ao retomar áudio:', e));
+        }
       });
       
       // Sistema de backgrounds
@@ -3339,12 +3462,14 @@
       // Inicializar aplicação
       function initializeApp() {
         try {
+          // Configurações iniciais
           setTheme(getTheme());
           setBackground(currentBackground);
           switchMode('work');
           updateSessionCounters();
           translatePage();
           
+          // Configurar UI inicial
           const volumeValue = document.getElementById('volumeValue');
           if (volumeValue) volumeValue.textContent = currentVolume + '%';
           
@@ -3354,18 +3479,61 @@
           const autoStartPomodoroCheck = document.getElementById('autoStartPomodoroCheck');
           if (autoStartPomodoroCheck) autoStartPomodoroCheck.checked = autoStartPomodoro;
           
+          // Configurar player de música
+          const musicContent = document.getElementById('musicContent');
+          const musicToggle = document.getElementById('musicToggle');
+          if (musicContent && musicToggle) {
+            if (isCollapsed) {
+              musicContent.classList.add('collapsed');
+              musicToggle.textContent = '+';
+              musicToggle.setAttribute('aria-expanded', 'false');
+            } else {
+              musicContent.classList.remove('collapsed');
+              musicToggle.textContent = '−';
+              musicToggle.setAttribute('aria-expanded', 'true');
+            }
+          }
+          
+          // Configurar gênero musical ativo
+          document.querySelectorAll('.genre-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.genre === currentGenre) {
+              btn.classList.add('active');
+            }
+          });
+          
+          // Carregar dados
           updateAddButton();
           loadTasks();
           loadHistory();
           updateTimerDisplay();
+          
+          // Inicializar event listeners
           initializeEventListeners();
+          setupTaskInputListeners();
+          
+          // Solicitar permissões
           requestNotificationPermission();
           
           console.log('Pomodoro App inicializado com sucesso');
         } catch (error) {
           console.error('Erro ao inicializar aplicação:', error);
+          // Fallback para funcionalidade básica
+          updateTimerDisplay();
+          loadTasks();
         }
       }
+      
+      // Adicionar CSS para animação de pulse
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes pulse {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); }
+        }
+      `;
+      document.head.appendChild(style);
       
       // Inicializar quando DOM estiver pronto
       if (document.readyState === 'loading') {
